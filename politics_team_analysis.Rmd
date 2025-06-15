@@ -1,0 +1,626 @@
+---
+title: "politics team fr analysis"
+author: "Laura Sørine Voldgaard"
+date: "2025-06-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# hvorfor er pacman fucked altså
+
+# libraries
+install.packages("pacman")
+library(pacman)
+
+pacman::p_load(tidyverse, dplyr, readxl, patchwork)
+
+pacman::p_load(lme4)
+library(lme4)
+
+install.packages("lmerTest")
+library(lmerTest)
+
+
+```
+
+```{r}
+getwd()
+```
+
+
+```{r}
+# load data
+data <- read_excel("data/data.xlsx", sheet = 1)
+```
+
+```{r}
+# Replace NA values in 'income' with 5
+data$income[is.na(data$income)] <- 5
+
+```
+
+
+*Analysis*
+
+**Overall political ideology**
+
+Controlling for variables gender, income, birth, birth_rg, residence_rg
+
+```{r}
+# make sure all variables are numerical
+data_long$gender <- as.factor(data_long$gender)
+data_long$income <- as.numeric(data_long$income)
+data_long$birth <- as.numeric(data_long$birth)
+data_long$birth_rg <- as.numeric(data_long$birth_rg)
+data_long$residence_rg <- as.numeric(data_long$residence_rg)
+
+
+```
+
+
+```{r}
+# I think I deleted this but need it to do the mixed effects model
+# Assume you have a respondent ID column
+data_long <- data %>%
+  pivot_longer(cols = c(past_ideology, now_ideology),
+               names_to = "time", values_to = "ideology") %>%
+  mutate(time = ifelse(time == "past_ideology", 0, 1))
+```
+
+
+
+
+```{r}
+# mixed effects model
+model_controlled <- lmer(
+  polarization ~ time + gender + income + birth + birth_rg + residence_rg + (1 | id),
+  data = data_long
+)
+
+summary(model_controlled)
+
+```
+
+
+```{r}
+model_controlled_null <- lmer(
+  polarization ~ gender + income + birth + birth_rg + residence_rg + (1 | id),
+  data = data_long
+)
+
+anova(model_controlled_null, model_controlled)
+
+```
+Significant, yay!
+
+
+
+
+
+**Party affiliation**
+
+
+
+Mixed effects model
+
+```{r}
+library(tidyr)
+library(dplyr)
+
+# Step 1: Create long-format ideology and polarization data
+long_data <- data %>%
+  mutate(
+    past_polarization = abs(past_ideology - 5.5),
+    now_polarization = abs(now_ideology - 5.5)
+  ) %>%
+  pivot_longer(
+    cols = c(past_polarization, now_polarization),
+    names_to = "time_point",
+    values_to = "polarization"
+  ) %>%
+  mutate(
+    time = ifelse(time_point == "past_polarization", 0, 1),
+    now_party_support = as.factor(now_party_support)
+  )
+
+```
+
+```{r}
+library(lme4)
+
+model_mixed <- lmer(
+  polarization ~ time * now_party_support + gender + income + birth + birth_rg + residence_rg + (1 | id),
+  data = long_data
+)
+
+summary(model_mixed)
+
+```
+
+
+
+Comparing party 10 (no support) to all other party affiliations
+```{r}
+# set binary variable
+data$party10_supporter <- ifelse(data$now_party_support == 10, 1, 0)
+
+```
+
+```{r}
+long_data <- data %>%
+  mutate(
+    past_polarization = abs(past_ideology - 5.5),
+    now_polarization = abs(now_ideology - 5.5)
+  ) %>%
+  pivot_longer(
+    cols = c(past_polarization, now_polarization),
+    names_to = "time_point",
+    values_to = "polarization"
+  ) %>%
+  mutate(
+    time = ifelse(time_point == "past_polarization", 0, 1),
+    party10_supporter = as.factor(ifelse(now_party_support == 10, 1, 0))  # match with wide data
+  )
+
+```
+
+
+```{r}
+library(lme4)
+
+model_party10 <- lmer(
+  polarization ~ time * party10_supporter + gender + income + birth + birth_rg + residence_rg + (1 | id),
+  data = long_data
+)
+
+summary(model_party10)
+
+```
+
+
+
+
+
+
+
+Reproduction of teammate's results: Do people who support different parties differ in how ideologically extreme they are?
+```{r}
+# compute distance from the ideological midpoint (e.g., 5.5):
+data$past_polarization <- abs(data$past_ideology - 5.5)
+data$now_polarization  <- abs(data$now_ideology - 5.5)
+
+```
+
+
+```{r}
+# Run One-Way ANOVA Per Time Point. Basically ask "Are there significant differences in polarization between party supporters at each time point?"
+
+# make sure they are factor
+data$past_party_support <- as.factor(data$past_party_support)
+data$now_party_support  <- as.factor(data$now_party_support)
+
+# november 2024
+aov_past <- aov(past_polarization ~ past_party_support, data = data)
+summary(aov_past)
+
+# may 2025
+aov_now <- aov(now_polarization ~ now_party_support, data = data)
+summary(aov_now)
+
+
+```
+Yes, there is.
+
+
+```{r}
+
+# Post-hoc tests - Tukey HSD
+TukeyHSD(aov_past)
+TukeyHSD(aov_now)
+
+
+
+```
+
+```{r}
+levels(data$past_party_support)
+levels(data$now_party_support)
+
+```
+
+Past: Tukey shows that party 4 (no support) is significantly lower polarization than supporters of party 1 (Democratic Party) and party 2 (PPP)
+
+
+
+
+```{r}
+# Summarize Group Means (for reporting)
+library(dplyr)
+
+# Past
+data %>%
+  group_by(past_party_support) %>%
+  summarise(
+    mean_past_extremity = mean(past_polarization, na.rm = TRUE),
+    sd_past_extremity = sd(past_polarization, na.rm = TRUE)
+  )
+
+# Now
+data %>%
+  group_by(now_party_support) %>%
+  summarise(
+    mean_now_extremity = mean(now_polarization, na.rm = TRUE),
+    sd_now_extremity = sd(now_polarization, na.rm = TRUE)
+  )
+
+```
+
+
+
+
+
+
+```{r}
+# Test Change in Polarization by Party
+data$polarization_change <- data$now_polarization - data$past_polarization
+
+aov_change <- aov(polarization_change ~ now_party_support, data = data)
+summary(aov_change)
+
+TukeyHSD(aov_change)
+
+```
+
+
+
+
+
+
+
+```{r}
+# Define custom colors
+custom_colors <- c(
+  "Democratic Party" = "blue",            
+  "People Power Party" = "red",          
+  "Justice Party" = "#F0E442",               
+  "New Future Party" = "#56B4E9",            
+  "Reform Party" = "#009E73",                
+  "Liberty Unification Party" = "#CC79A7",   
+  "Progressive Party" = "#999999",           
+  "Cho Kuk Innovation Party" = "#E69F00",    
+  "Basic Income Party" = "#8DD3C7",          
+  "No Party Preference" = "grey",
+  "No Party Supported" = "grey"  # to match the name used in your data
+)
+
+# Create long format for plotting
+data_long_party <- data %>%
+  select(id, now_party_support, past_polarization, now_polarization) %>%
+  pivot_longer(cols = c(past_polarization, now_polarization),
+               names_to = "time", values_to = "polarization") %>%
+  mutate(
+    time = factor(
+      ifelse(time == "past_polarization", "Nov 2024", "May 2025"),
+      levels = c("Nov 2024", "May 2025")
+    ),
+    now_party_support = factor(
+      now_party_support,
+      levels = c(1, 2, 3, 4, 5, 6, 7),
+      labels = c(
+        "Democratic Party",
+        "People Power Party",
+        "Justice Party",
+        "Reform Party",
+        "Cho Kuk Innovation Party",
+        "Basic Income Party",
+        "No Party Supported"
+      )
+    )
+  )
+
+# Plot mean polarization by party and time with custom colors
+change_polarization_by_party_affiliation_plot <- ggplot(data_long_party, aes(x = time, y = polarization, color = now_party_support, group = now_party_support)) +
+  stat_summary(fun = mean, geom = "line") +
+  stat_summary(fun = mean, geom = "point") +
+  scale_color_manual(values = custom_colors) +
+  labs(
+    title = "Change in Polarization by Party Support",
+    y = "Mean Polarization (distance from ideological midpoint)",
+    x = "Time",
+    color = "Party Support"
+  ) +
+  theme_minimal()
+
+change_polarization_by_party_affiliation_plot
+
+```
+
+
+```{r save plot}
+# save plot
+ggsave("viz/change_polarization_by_party_affiliation_plot.png", plot = change_polarization_by_party_affiliation_plot, width = 13, height = 9, dpi = 300)  # Save as PNG
+```
+
+
+
+
+
+
+
+
+**Support for Yoon Suk-yeol**
+
+
+```{r}
+# define polarization from midpoint
+data$past_yoon_polarization <- abs(data$past_yoon - 3)
+data$now_yoon_polarization  <- abs(data$now_yoon - 3)
+
+```
+
+```{r}
+# make data_long_yoon
+data_long_yoon <- data %>%
+  select(id, past_yoon_polarization, now_yoon_polarization) %>%
+  pivot_longer(cols = c(past_yoon_polarization, now_yoon_polarization),
+               names_to = "time", values_to = "yoon_polarization") %>%
+  mutate(time = ifelse(time == "past_yoon_polarization", 0, 1))
+
+```
+
+
+```{r}
+# add control variables to data_long_yoon
+data_long_yoon <- data_long_yoon %>%
+  left_join(data %>% select(id, gender, income, birth, birth_rg, residence_rg), by = "id")
+
+```
+
+
+```{r}
+# mixed effects model
+model_yoon_polarization <- lmer(
+  yoon_polarization ~ time + gender + income + birth + birth_rg + residence_rg + (1 | id),
+  data = data_long_yoon
+)
+summary(model_yoon_polarization)
+
+```
+
+
+
+
+
+
+
+
+
+**Gender differences**
+
+
+
+
+hmmm working out the gender thing
+```{r}
+table(data$gender)
+```
+
+
+```{r}
+library(dplyr)
+
+# First, label genders for readability
+data %>%
+  mutate(gender_label = ifelse(gender == 0, "Men", "Women")) %>%
+  group_by(gender_label, past_yoon) %>%
+  summarise(count = n()) %>%
+  arrange(gender_label, past_yoon)
+
+```
+
+
+```{r}
+data %>%
+  mutate(gender_label = ifelse(gender == 0, "Men", "Women")) %>%
+  group_by(gender_label, now_yoon) %>%
+  summarise(count = n()) %>%
+  arrange(gender_label, now_yoon)
+
+```
+
+
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Define label mapping
+support_labels <- c(
+  "1" = "Strongly Oppose",
+  "2" = "Somewhat Oppose",
+  "3" = "Neutral",
+  "4" = "Somewhat Support",
+  "5" = "Strongly Support"
+)
+
+# Prepare percentage data for past support
+plot_data_past <- data %>%
+  mutate(gender_label = ifelse(gender == 0, "Men", "Women")) %>%
+  group_by(gender_label, past_yoon) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  complete(gender_label, past_yoon = 1:5, fill = list(count = 0)) %>%
+  group_by(gender_label) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Plot with custom colors and tilted x-axis labels
+past_yoon_gender_plot <- ggplot(plot_data_past, aes(x = factor(past_yoon), y = percentage, fill = gender_label)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_x_discrete(labels = support_labels) +
+  scale_fill_manual(values = c("Men" = "darkcyan", "Women" = "darkorange2")) +
+  labs(
+    title = "Past Support for Yoon (Nov. 2024) by Gender",
+    x = "Yoon Support Level",
+    y = "Percentage of Respondents (%)",
+    fill = "Gender"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))  # Tilt x-axis labels
+
+past_yoon_gender_plot
+
+
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# --- Reuse the same label mapping ------------------------------------------
+support_labels <- c(
+  "1" = "Strongly Oppose",
+  "2" = "Somewhat Oppose",
+  "3" = "Neutral",
+  "4" = "Somewhat Support",
+  "5" = "Strongly Support"
+)
+
+# --- Prepare percentage data for current support ---------------------------
+plot_data_now <- data %>%
+  mutate(gender_label = ifelse(gender == 0, "Men", "Women")) %>%
+  group_by(gender_label, now_yoon) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  complete(gender_label, now_yoon = 1:5, fill = list(count = 0)) %>%
+  group_by(gender_label) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# --- Plot ------------------------------------------------------------------
+# Plot current support (May 2025) by gender with tilted x-axis labels
+now_yoon_gender_plot <- ggplot(plot_data_now, aes(x = factor(now_yoon), y = percentage, fill = gender_label)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_x_discrete(labels = support_labels) +
+  scale_fill_manual(values = c("Men" = "darkcyan", "Women" = "darkorange2")) +
+  labs(
+    title = "Current Support for Yoon (May 2025) by Gender",
+    x = "Yoon Support Level",
+    y = "Percentage of Respondents (%)",
+    fill = "Gender"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))  # Tilted labels
+
+now_yoon_gender_plot
+
+
+```
+
+
+
+```{r}
+# Use coord_cartesian instead of ylim
+past_yoon_gender_plot <- past_yoon_gender_plot + coord_cartesian(ylim = c(0, 65))
+now_yoon_gender_plot <- now_yoon_gender_plot + coord_cartesian(ylim = c(0, 65))
+
+# Combine them
+past_now_yoon_gender_plot <- past_yoon_gender_plot + now_yoon_gender_plot
+past_now_yoon_gender_plot
+
+```
+
+
+
+```{r save plot}
+# save plot
+ggsave("viz/past_now_yoon_gender_plot.png", plot = past_now_yoon_gender_plot, width = 12, height = 6, dpi = 300)  # Save as PNG
+```
+
+
+
+
+
+
+**Gender differences in ideological polarization**
+```{r}
+library(lme4)
+library(lmerTest)  # for p-values
+library(dplyr)
+library(tidyr)
+
+# 1. Prepare long-format data
+data_long_gender <- data %>%
+  mutate(past_extremity = abs(past_ideology - 5.5),
+         now_extremity = abs(now_ideology - 5.5)) %>%
+  select(id, gender, past_extremity, now_extremity) %>%
+  pivot_longer(cols = c(past_extremity, now_extremity),
+               names_to = "time", values_to = "extremity") %>%
+  mutate(time = ifelse(time == "past_extremity", 0, 1))  # 0 = past, 1 = now
+
+# 2. Run mixed effects model
+model_gender <- lmer(extremity ~ time * gender + (1 | id), data = data_long_gender)
+summary(model_gender)
+
+```
+
+
+
+```{r}
+model_gender2 <- lmer(extremity ~ time * gender + income + birth + birth_rg + residence_rg + (1 | id))
+
+```
+
+```{r}
+library(lmerTest)  # if not already loaded
+
+# Fit the model
+model_gender_controls <- lmer(
+  extremity ~ time * gender + income + birth + birth_rg + residence_rg + (1 | id),
+  data = data_long_gender
+)
+
+# View the summary output
+summary(model_gender_controls)
+
+```
+
+
+```{r}
+# Add the demographic variables to the long-format data
+data_long_gender <- data_long_gender %>%
+  left_join(data %>% select(id, income, birth, birth_rg, residence_rg), by = "id")
+
+# Now run the model again
+model_gender_controls <- lmer(
+  extremity ~ time * gender + income + birth + birth_rg + residence_rg + (1 | id),
+  data = data_long_gender
+)
+
+# View model output
+summary(model_gender_controls)
+
+```
+
+
+
+```{r}
+data_long_gender$birth_c <- data_long_gender$birth - mean(data_long_gender$birth, na.rm = TRUE)
+
+```
+
+```{r}
+model_gender_controls <- lmer(
+  extremity ~ time * gender + income + birth_c + birth_rg + residence_rg + (1 | id),
+  data = data_long_gender
+)
+summary(model_gender_controls)
+
+```
+
+
+
